@@ -63,8 +63,26 @@ def cast_types(df):
     key for every downstream feature, so a row without it cannot be
     attributed to anyone.
     """
-    # TODO: your implementation here
-    raise NotImplementedError("cast_types is not implemented")
+    for col_name, data_type in SCHEMA.items():
+        if col_name in df.columns:
+            # 1. Trim whitespace & 2. Convert empty string "" to null
+            trimmed = F.trim(F.col(col_name))
+            col_expr = F.when(trimmed == "", None).otherwise(trimmed)
+
+            # 3. Parse purchase_date with multiple format fallback or cast type
+            if col_name == "purchase_date":
+                col_expr = F.coalesce(
+                    F.to_date(col_expr, "yyyy-MM-dd"),
+                    F.to_date(col_expr, "MM/dd/yyyy")
+                )
+            else:
+                col_expr = col_expr.cast(data_type)
+
+            df = df.withColumn(col_name, col_expr)
+
+    # Drop rows where customer_id is null
+    df = df.filter(F.col("customer_id").isNotNull())
+    return df
 
 
 def impute_nulls(df):
@@ -79,8 +97,20 @@ def impute_nulls(df):
 
     Numeric columns: NUMERIC_COLS.  String columns: STRING_COLS.
     """
-    # TODO: your implementation here
-    raise NotImplementedError("impute_nulls is not implemented")
+    # Impute numeric columns with column median
+    for col_name in NUMERIC_COLS:
+        quantiles = df.approxQuantile(col_name, [0.5], 0.0)
+        if quantiles:
+            median_val = quantiles[0]
+            if SCHEMA.get(col_name) == "int":
+                median_val = int(round(median_val))
+            df = df.fillna({col_name: median_val})
+
+    # Impute string columns with 'unknown'
+    for col_name in STRING_COLS:
+        df = df.fillna({col_name: "unknown"})
+
+    return df
 
 
 def deduplicate(df):
@@ -101,8 +131,15 @@ def deduplicate(df):
     A window function with row_number() over a partition by transaction_id
     is the idiomatic approach.
     """
-    # TODO: your implementation here
-    raise NotImplementedError("deduplicate is not implemented")
+    window_spec = Window.partitionBy("transaction_id").orderBy(
+        F.col("purchase_date").desc_nulls_last(),
+        F.col("order_value").desc_nulls_last()
+    )
+    return (
+        df.withColumn("row_num", F.row_number().over(window_spec))
+        .filter(F.col("row_num") == 1)
+        .drop("row_num")
+    )
 
 
 def main():
